@@ -1,0 +1,135 @@
+@import "tailwindcss";
+
+@theme {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-radius: var(--radius);
+}
+
+:root {
+  --background: 255 255 255; /* white */
+  --foreground: 15 23 42; /* slate-950 */
+  --card: 255 255 255;
+  --card-foreground: 15 23 42;
+  --popover: 255 255 255;
+  --popover-foreground: 15 23 42;
+  --primary: 15 23 42; /* slate-950 */
+  --primary-foreground: 248 250 252; /* slate-50 */
+  --secondary: 241 245 249; /* slate-100 */
+  --secondary-foreground: 15 23 42;
+  --muted: 241 245 249;
+  --muted-foreground: 100 116 139; /* slate-500 */
+  --accent: 241 245 249;
+  --accent-foreground: 15 23 42;
+  --destructive: 239 68 68; /* red-500 */
+  --destructive-foreground: 248 250 252;
+  --border: 226 232 240; /* slate-200 */
+  --input: 226 232 240;
+  --ring: 15 23 42;
+  --radius: 0.5rem;
+}
+
+.dark {
+  --background: 2 6 23; /* slate-950 */
+  --foreground: 248 250 252; /* slate-50 */
+  --card: 2 6 23;
+  --card-foreground: 248 250 252;
+  --popover: 2 6 23;
+  --popover-foreground: 248 250 252;
+  --primary: 248 250 252;
+  --primary-foreground: 15 23 42;
+  --secondary: 30 41 59; /* slate-800 */
+  --secondary-foreground: 248 250 252;
+  --muted: 30 41 59;
+  --muted-foreground: 148 163 184; /* slate-400 */
+  --accent: 30 41 59;
+  --accent-foreground: 248 250 252;
+  --destructive: 127 29 29; /* red-900 */
+  --destructive-foreground: 248 250 252;
+  --border: 30 41 59;
+  --input: 30 41 59;
+  --ring: 203 213 225; /* slate-300 */
+}
+
+/* Tailwind 4 variables need specific syntax or just CSS variables mapped */
+/* Since I am using Tailwind 4, I should use the theme directives to map these. */
+/* However, for shadcn to work with standard utility classes like bg-background, */
+/* I need to make sure 'background' is defined in the theme. */
+
+/* I will attempt to define them as colors in the theme block above. */
+/* But Tailwind 4 uses color-mix or similar for opacity support if I use numbers. */
+/* For simplicity, I will use hex/rgb directly or just rely on CSS variables */
+/* and hope Tailwind picks them up if I declare them in @theme. */
+
+/* Actually, in Tailwind 4, you can extend the theme in CSS. */
+/* Let's redefine the root variables to be valid colors. */
+:root {
+  --background: #ffffff;
+  --foreground: #0f172a;
+  --card: #ffffff;
+  --card-foreground: #0f172a;
+  --popover: #ffffff;
+  --popover-foreground: #0f172a;
+  --primary: #0f172a;
+  --primary-foreground: #f8fafc;
+  --secondary: #f1f5f9;
+  --secondary-foreground: #0f172a;
+  --muted: #f1f5f9;
+  --muted-foreground: #64748b;
+  --accent: #f1f5f9;
+  --accent-foreground: #0f172a;
+  --destructive: #ef4444;
+  --destructive-foreground: #f8fafc;
+  --border: #e2e8f0;
+  --input: #e2e8f0;
+  --ring: #0f172a;
+  --radius: 0.5rem;
+}
+
+.dark {
+  --background: #020617;
+  --foreground: #f8fafc;
+  --card: #020617;
+  --card-foreground: #f8fafc;
+  --popover: #020617;
+  --popover-foreground: #f8fafc;
+  --primary: #f8fafc;
+  --primary-foreground: #0f172a;
+  --secondary: #1e293b;
+  --secondary-foreground: #f8fafc;
+  --muted: #1e293b;
+  --muted-foreground: #94a3b8;
+  --accent: #1e293b;
+  --accent-foreground: #f8fafc;
+  --destructive: #7f1d1d;
+  --destructive-foreground: #f8fafc;
+  --border: #1e293b;
+  --input: #1e293b;
+  --ring: #cbd5e1;
+}
+
+body {
+  @apply bg-background text-foreground;
+}
+
+/* Utilities for border radius */
+.rounded-lg { border-radius: var(--radius); }
+.rounded-md { border-radius: calc(var(--radius) - 2px); }
+.rounded-sm { border-radius: calc(var(--radius) - 4px); }
