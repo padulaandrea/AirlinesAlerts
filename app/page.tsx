@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { createClient } from '@supabase/supabase-js';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/components/ui/card';
@@ -15,8 +15,6 @@ type Suggestion = {
 
 export default function Dashboard() {
   // Initialize Supabase client lazily inside the component using useState.
-  // This ensures it runs only once (singleton-like per component instance)
-  // and avoids module-level execution which can fail during build if env vars are missing.
   const [supabase] = useState(() => createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
@@ -24,7 +22,12 @@ export default function Dashboard() {
 
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [loading, setLoading] = useState(true);
-  const [user, setUser] = useState<{ id: string } | null>(null);
+  const [user, setUser] = useState<{ id: string; email?: string } | null>(null);
+
+  // Login State
+  const [authEmail, setAuthEmail] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [isLogin, setIsLogin] = useState(true);
 
   // Form State
   const [origin, setOrigin] = useState('');
@@ -55,9 +58,43 @@ export default function Dashboard() {
       const { data: { user } } = await supabase.auth.getUser();
       setUser(user);
       if (user) fetchAlerts(user.id);
+      else setLoading(false);
     }
     getUser();
-  }, [fetchAlerts, supabase.auth]); // supabase.auth is stable
+  }, [fetchAlerts, supabase.auth]);
+
+  async function handleAuth(e: React.FormEvent) {
+    e.preventDefault();
+    setLoading(true);
+    if (isLogin) {
+        const { data, error } = await supabase.auth.signInWithPassword({
+            email: authEmail,
+            password: authPassword
+        });
+        if (error) alert(error.message);
+        else {
+            setUser(data.user);
+            fetchAlerts(data.user.id);
+        }
+    } else {
+        const { data, error } = await supabase.auth.signUp({
+            email: authEmail,
+            password: authPassword
+        });
+        if (error) alert(error.message);
+        else if (data.user) {
+            // Sync with public.users table
+            await supabase.from('users').insert({
+                id: data.user.id,
+                email: authEmail
+            });
+            setUser(data.user);
+            alert('Account created! You may need to confirm email if configured.');
+            // fetchAlerts(data.user.id); // Likely empty but good to reset
+        }
+    }
+    setLoading(false);
+  }
 
   async function createAlert(e: React.FormEvent) {
     e.preventDefault();
@@ -104,7 +141,6 @@ export default function Dashboard() {
   const handleOriginChange = (val: string) => {
       setOrigin(val);
       if (val.length > 1) {
-          // simple debounce
           setTimeout(() => fetchAirports(val, setOriginSuggestions), 300);
       }
   };
@@ -116,9 +152,61 @@ export default function Dashboard() {
       }
   };
 
+  // Render Login if not authenticated
+  if (!user) {
+      return (
+          <div className="container mx-auto p-4 flex items-center justify-center min-h-screen">
+              <Card className="w-full max-w-md">
+                  <CardHeader>
+                      <CardTitle>{isLogin ? 'Login' : 'Sign Up'}</CardTitle>
+                      <CardDescription>
+                          {isLogin ? 'Welcome back to Flight Deal Alerts' : 'Create an account to start tracking flights'}
+                      </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                      <form onSubmit={handleAuth} className="space-y-4">
+                          <div>
+                              <label className="text-sm font-medium">Email</label>
+                              <Input
+                                  type="email"
+                                  value={authEmail}
+                                  onChange={e => setAuthEmail(e.target.value)}
+                                  required
+                              />
+                          </div>
+                          <div>
+                              <label className="text-sm font-medium">Password</label>
+                              <Input
+                                  type="password"
+                                  value={authPassword}
+                                  onChange={e => setAuthPassword(e.target.value)}
+                                  required
+                                  minLength={6}
+                              />
+                          </div>
+                          <Button type="submit" className="w-full" disabled={loading}>
+                              {loading ? 'Loading...' : (isLogin ? 'Login' : 'Sign Up')}
+                          </Button>
+                          <p className="text-sm text-center text-muted-foreground cursor-pointer hover:underline" onClick={() => setIsLogin(!isLogin)}>
+                              {isLogin ? "Don't have an account? Sign Up" : "Already have an account? Login"}
+                          </p>
+                      </form>
+                  </CardContent>
+              </Card>
+          </div>
+      );
+  }
+
   return (
     <div className="container mx-auto p-4 max-w-4xl">
-      <h1 className="text-3xl font-bold mb-8">Flight Deal Alerts</h1>
+      <div className="flex justify-between items-center mb-8">
+         <h1 className="text-3xl font-bold">Flight Deal Alerts</h1>
+         <Button variant="outline" onClick={() => {
+             supabase.auth.signOut();
+             setUser(null);
+             setAlerts([]);
+         }}>Sign Out</Button>
+      </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
         <div className="md:col-span-1">
@@ -136,7 +224,7 @@ export default function Dashboard() {
                         onChange={e => handleOriginChange(e.target.value)}
                         placeholder="e.g. JFK"
                         required
-                        maxLength={3} // Quick hack if user types code manually
+                        maxLength={3}
                         list="origin-suggestions"
                     />
                     <datalist id="origin-suggestions">
