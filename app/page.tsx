@@ -1,21 +1,12 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { createClient } from '@supabase/supabase-js';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/components/ui/card';
 import { Trash2 } from 'lucide-react';
 import { Alert } from '@/lib/types';
-
-// Lazily init client to avoid build issues
-const getSupabase = () => createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
-
-// Initialize outside component to avoid re-creation on every render
-const supabase = getSupabase();
 
 type Suggestion = {
   label: string;
@@ -23,6 +14,14 @@ type Suggestion = {
 };
 
 export default function Dashboard() {
+  // Initialize Supabase client lazily inside the component using useState.
+  // This ensures it runs only once (singleton-like per component instance)
+  // and avoids module-level execution which can fail during build if env vars are missing.
+  const [supabase] = useState(() => createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  ));
+
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [loading, setLoading] = useState(true);
   const [user, setUser] = useState<{ id: string } | null>(null);
@@ -49,7 +48,7 @@ export default function Dashboard() {
 
     if (data) setAlerts(data as Alert[]);
     setLoading(false);
-  }, []);
+  }, [supabase]);
 
   useEffect(() => {
     async function getUser() {
@@ -58,7 +57,7 @@ export default function Dashboard() {
       if (user) fetchAlerts(user.id);
     }
     getUser();
-  }, [fetchAlerts]);
+  }, [fetchAlerts, supabase.auth]); // supabase.auth is stable
 
   async function createAlert(e: React.FormEvent) {
     e.preventDefault();
