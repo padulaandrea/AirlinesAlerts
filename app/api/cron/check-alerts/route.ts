@@ -9,7 +9,7 @@ import { differenceInHours, parseISO } from 'date-fns';
 const getSupabase = () => {
     return createClient(
         process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.SUPABASE_SERVICE_ROLE_KEY!
+        process.env.NEXT_SUPABASE_SERVICE_ROLE_KEY!
     );
 };
 
@@ -31,12 +31,12 @@ export async function GET(req: NextRequest) {
   }
 
   const supabase = getSupabase();
-  const resend = getResend();
+  // const resend = getResend();
 
   // Fetch active alerts and join with users to get email
   const { data: alerts, error } = await supabase
     .from('alerts')
-    .select('*, users(email)')
+    .select('*, users!alerts_user_id_fkey(email)')
     .eq('is_active', true);
 
   if (error) {
@@ -45,7 +45,7 @@ export async function GET(req: NextRequest) {
   }
 
   const results = [];
-
+  console.log(alerts)
   for (const alertData of alerts || []) {
     // Type assertion or manual mapping needed because of the join
     const alert = alertData as unknown as AlertWithUser;
@@ -72,31 +72,40 @@ export async function GET(req: NextRequest) {
 
     // Check for flights
     const flight = await checkFlights(alert);
-
+    console.log(4)
     if (flight) {
+      // console.log(flight);
+      console.log(JSON.stringify(flight, null, 2));
       // Send Email
-      const { error: emailError } = await resend.emails.send({
-        from: 'Flight Alert <onboarding@resend.dev>',
-        to: [userEmail],
-        subject: `Flight Deal Found: ${alert.origin_code} to ${alert.destination_code}`,
-        html: `<p>Found a flight for <strong>${flight.price.grandTotal} ${flight.price.currency}</strong>!</p>
+      console.log(
+        `<p>Found a flight for <strong>${flight.price.grandTotal} ${flight.price.currency}</strong>!</p>
                <p>Departure: ${flight.itineraries[0].segments[0].departure.at}</p>
                <p>Price Limit: ${alert.target_price}</p>
-               <p><a href="#">Book Now on Amadeus/Airline</a></p>`,
-      });
+               <p><a href="#">Book Now on Amadeus/Airline</a></p>`
 
-      if (emailError) {
-        console.error('Email error', emailError);
-      } else {
-         console.log(`Email sent to ${userEmail} for alert ${alert.id}`);
-         // Update last_notified_at
-         await supabase
-           .from('alerts')
-           .update({ last_notified_at: new Date().toISOString() })
-           .eq('id', alert.id);
-      }
+      )
+      // const { error: emailError } = await resend.emails.send({
+      //   from: 'Flight Alert <onboarding@resend.dev>',
+      //   to: [userEmail],
+      //   subject: `Flight Deal Found: ${alert.origin_code} to ${alert.destination_code}`,
+      //   html: `<p>Found a flight for <strong>${flight.price.grandTotal} ${flight.price.currency}</strong>!</p>
+      //          <p>Departure: ${flight.itineraries[0].segments[0].departure.at}</p>
+      //          <p>Price Limit: ${alert.target_price}</p>
+      //          <p><a href="#">Book Now on Amadeus/Airline</a></p>`,
+      // });
 
-      results.push({ alertId: alert.id, flightFound: true, price: flight.price.grandTotal, emailSent: !emailError });
+      // if (emailError) {
+      //   console.error('Email error', emailError);
+      // } else {
+      //    console.log(`Email sent to ${userEmail} for alert ${alert.id}`);
+      //    // Update last_notified_at
+      //    await supabase
+      //      .from('alerts')
+      //      .update({ last_notified_at: new Date().toISOString() })
+      //      .eq('id', alert.id);
+      // }
+
+      results.push({ alertId: alert.id, flightFound: true, price: flight.price.grandTotal, emailSent: true });
     } else {
       results.push({ alertId: alert.id, flightFound: false });
     }

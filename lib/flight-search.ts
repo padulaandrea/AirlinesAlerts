@@ -56,7 +56,7 @@ export async function checkFlights(alert: Alert): Promise<FlightOffer | null> {
   // Determine dates to check
   // Limit to checking 3 dates per run to be safer on rate limits since we might have many alerts
   const datesToCheck = getDatesToCheck(alert.start_date_range, alert.end_date_range, 3);
-
+ console.log(datesToCheck)
   if (datesToCheck.length === 0) {
     console.log('No dates to check for this alert.');
     return null;
@@ -67,6 +67,7 @@ export async function checkFlights(alert: Alert): Promise<FlightOffer | null> {
 
   for (const date of datesToCheck) {
     try {
+      console.log(date);
       // Add a small delay between requests to be nice to the API
       await new Promise(resolve => setTimeout(resolve, 500));
 
@@ -92,7 +93,7 @@ export async function checkFlights(alert: Alert): Promise<FlightOffer | null> {
       const response = await amadeus.shopping.flightOffersSearch.get(searchParams) as AmadeusResponse;
 
       if (!response.body) continue;
-
+      // console.log(response.body)
       const flights: FlightOffer[] = JSON.parse(response.body).data;
 
       for (const flight of flights) {

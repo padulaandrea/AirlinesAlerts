@@ -5,7 +5,7 @@ import { createClient } from '@supabase/supabase-js';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/components/ui/card';
-import { Trash2 } from 'lucide-react';
+import { Trash2, LogIn } from 'lucide-react'; // Added LogIn icon
 import { Alert } from '@/lib/types';
 
 type Suggestion = {
@@ -14,22 +14,20 @@ type Suggestion = {
 };
 
 export default function Dashboard() {
-  // Initialize Supabase client lazily inside the component using useState.
+  // 1. Initialize Supabase
   const [supabase] = useState(() => createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
   ));
 
-  const [alerts, setAlerts] = useState<Alert[]>([]);
-  const [loading, setLoading] = useState(true);
+  // 2. User & Auth State
   const [user, setUser] = useState<{ id: string; email?: string } | null>(null);
+  const [email, setEmail] = useState(''); // State for login input
+  const [loading, setLoading] = useState(true);
+  const [loginLoading, setLoginLoading] = useState(false); // Loading state for login button
 
-  // Login State
-  const [authEmail, setAuthEmail] = useState('');
-  const [authPassword, setAuthPassword] = useState('');
-  const [isLogin, setIsLogin] = useState(true);
-
-  // Form State
+  // App State
+  const [alerts, setAlerts] = useState<Alert[]>([]);
   const [origin, setOrigin] = useState('');
   const [destination, setDestination] = useState('');
   const [targetPrice, setTargetPrice] = useState('');
@@ -54,47 +52,80 @@ export default function Dashboard() {
   }, [supabase]);
 
   useEffect(() => {
+    // 1. Helper: Sync the logged-in user to the public.users table
+    const syncUser = async (sessionUser: { id: string; email?: string }) => {
+      if (!sessionUser.email) return;
+
+      // "Upsert" = Insert if new, Update if exists (prevents duplicate errors)
+      const { error } = await supabase.from('users').upsert(
+        {
+          id: sessionUser.id,
+          email: sessionUser.email,
+        },
+        { onConflict: 'id' }
+      );
+
+      if (error) console.error('Error syncing user:', error);
+    };
+
     async function getUser() {
-      const { data: { user } } = await supabase.auth.getUser();
-      setUser(user);
-      if (user) fetchAlerts(user.id);
-      else setLoading(false);
+      // 2. Check active session
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.user) {
+        // SYNC HAPPENS HERE ON PAGE LOAD
+        await syncUser(session.user); 
+        setUser(session.user);
+        fetchAlerts(session.user.id);
+      } else {
+        setLoading(false);
+      }
+
+      // 3. Listen for auth changes (e.g., logging in)
+      const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+        if (session?.user) {
+          // SYNC HAPPENS HERE ON LOGIN
+          await syncUser(session.user);
+          setUser(session.user);
+          fetchAlerts(session.user.id);
+        } else {
+          setUser(null);
+          setAlerts([]);
+        }
+      });
+
+      return () => subscription.unsubscribe();
     }
     getUser();
-  }, [fetchAlerts, supabase.auth]);
+  }, [fetchAlerts, supabase]);
 
-  async function handleAuth(e: React.FormEvent) {
+  // --- NEW: Login Function ---
+  async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
-    setLoading(true);
-    if (isLogin) {
-        const { data, error } = await supabase.auth.signInWithPassword({
-            email: authEmail,
-            password: authPassword
-        });
-        if (error) alert(error.message);
-        else {
-            setUser(data.user);
-            fetchAlerts(data.user.id);
-        }
+    setLoginLoading(true);
+    
+    // Uses Magic Link (Email OTP) - easiest for setup
+    const { error } = await supabase.auth.signInWithOtp({
+      email,
+      options: {
+        // This redirects them back to this page after clicking the email link
+        emailRedirectTo: typeof window !== 'undefined' ? window.location.origin : undefined,
+      }
+    });
+
+    if (error) {
+      alert('Error logging in: ' + error.message);
     } else {
-        const { data, error } = await supabase.auth.signUp({
-            email: authEmail,
-            password: authPassword
-        });
-        if (error) alert(error.message);
-        else if (data.user) {
-            // Sync with public.users table
-            await supabase.from('users').insert({
-                id: data.user.id,
-                email: authEmail
-            });
-            setUser(data.user);
-            alert('Account created! You may need to confirm email if configured.');
-            // fetchAlerts(data.user.id); // Likely empty but good to reset
-        }
+      alert('Check your email for the login link!');
     }
-    setLoading(false);
+    setLoginLoading(false);
   }
+
+  async function handleLogout() {
+    await supabase.auth.signOut();
+    setUser(null);
+    setAlerts([]);
+  }
+  // ---------------------------
 
   async function createAlert(e: React.FormEvent) {
     e.preventDefault();
@@ -115,6 +146,7 @@ export default function Dashboard() {
     if (error) {
       alert(error.message);
     } else {
+      // Reset form
       setOrigin('');
       setDestination('');
       setTargetPrice('');
@@ -133,79 +165,69 @@ export default function Dashboard() {
           setFn([]);
           return;
       }
-      const res = await fetch(`/api/airports?keyword=${keyword}`);
-      const data = await res.json();
-      setFn(data.data || []);
+      // Note: Ensure you have this API route created or this will fail silently
+      try {
+        const res = await fetch(`/api/airports?keyword=${keyword}`);
+        if (res.ok) {
+            const data = await res.json();
+            setFn(data.data || []);
+        }
+      } catch (err) {
+        console.error("Autocomplete error", err);
+      }
   };
 
   const handleOriginChange = (val: string) => {
       setOrigin(val);
-      if (val.length > 1) {
-          setTimeout(() => fetchAirports(val, setOriginSuggestions), 300);
-      }
+      if (val.length > 1) setTimeout(() => fetchAirports(val, setOriginSuggestions), 300);
   };
 
   const handleDestinationChange = (val: string) => {
       setDestination(val);
-      if (val.length > 1) {
-           setTimeout(() => fetchAirports(val, setDestinationSuggestions), 300);
-      }
+      if (val.length > 1) setTimeout(() => fetchAirports(val, setDestinationSuggestions), 300);
   };
 
-  // Render Login if not authenticated
+  // --- VIEW 1: NOT LOGGED IN ---
   if (!user) {
-      return (
-          <div className="container mx-auto p-4 flex items-center justify-center min-h-screen">
-              <Card className="w-full max-w-md">
-                  <CardHeader>
-                      <CardTitle>{isLogin ? 'Login' : 'Sign Up'}</CardTitle>
-                      <CardDescription>
-                          {isLogin ? 'Welcome back to Flight Deal Alerts' : 'Create an account to start tracking flights'}
-                      </CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                      <form onSubmit={handleAuth} className="space-y-4">
-                          <div>
-                              <label className="text-sm font-medium">Email</label>
-                              <Input
-                                  type="email"
-                                  value={authEmail}
-                                  onChange={e => setAuthEmail(e.target.value)}
-                                  required
-                              />
-                          </div>
-                          <div>
-                              <label className="text-sm font-medium">Password</label>
-                              <Input
-                                  type="password"
-                                  value={authPassword}
-                                  onChange={e => setAuthPassword(e.target.value)}
-                                  required
-                                  minLength={6}
-                              />
-                          </div>
-                          <Button type="submit" className="w-full" disabled={loading}>
-                              {loading ? 'Loading...' : (isLogin ? 'Login' : 'Sign Up')}
-                          </Button>
-                          <p className="text-sm text-center text-muted-foreground cursor-pointer hover:underline" onClick={() => setIsLogin(!isLogin)}>
-                              {isLogin ? "Don't have an account? Sign Up" : "Already have an account? Login"}
-                          </p>
-                      </form>
-                  </CardContent>
-              </Card>
-          </div>
-      );
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-gray-50">
+        <Card className="w-full max-w-md">
+          <CardHeader>
+            <CardTitle>Welcome</CardTitle>
+            <CardDescription>Enter your email to sign in or sign up.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={handleLogin} className="space-y-4">
+              <Input 
+                type="email" 
+                placeholder="your@email.com" 
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+              />
+              <Button type="submit" className="w-full" disabled={loginLoading}>
+                {loginLoading ? 'Sending Link...' : 'Send Magic Link'}
+              </Button>
+            </form>
+          </CardContent>
+        </Card>
+      </div>
+    );
   }
 
+  // --- VIEW 2: LOGGED IN (DASHBOARD) ---
   return (
     <div className="container mx-auto p-4 max-w-4xl">
       <div className="flex justify-between items-center mb-8">
-         <h1 className="text-3xl font-bold">Flight Deal Alerts</h1>
-         <Button variant="outline" onClick={() => {
-             supabase.auth.signOut();
-             setUser(null);
-             setAlerts([]);
-         }}>Sign Out</Button>
+        <h1 className="text-3xl font-bold">Flight Deal Alerts</h1>
+        <div className="flex items-center gap-4">
+            <span className="text-sm text-muted-foreground hidden sm:inline">
+                {user.email}
+            </span>
+            <Button variant="outline" size="sm" onClick={handleLogout}>
+                Logout
+            </Button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
@@ -217,6 +239,7 @@ export default function Dashboard() {
             </CardHeader>
             <CardContent>
               <form onSubmit={createAlert} className="space-y-4">
+                {/* Origin Input */}
                 <div>
                     <label className="text-sm font-medium">Origin (IATA)</label>
                     <Input
@@ -224,7 +247,7 @@ export default function Dashboard() {
                         onChange={e => handleOriginChange(e.target.value)}
                         placeholder="e.g. JFK"
                         required
-                        maxLength={3}
+                        maxLength={3} 
                         list="origin-suggestions"
                     />
                     <datalist id="origin-suggestions">
@@ -233,6 +256,8 @@ export default function Dashboard() {
                         ))}
                     </datalist>
                 </div>
+
+                {/* Destination Input */}
                 <div>
                     <label className="text-sm font-medium">Destination (IATA)</label>
                     <Input
@@ -249,6 +274,8 @@ export default function Dashboard() {
                         ))}
                     </datalist>
                 </div>
+
+                {/* Other Inputs */}
                  <div>
                     <label className="text-sm font-medium">Target Price (USD)</label>
                     <Input
@@ -280,7 +307,7 @@ export default function Dashboard() {
                 <div>
                     <label className="text-sm font-medium">Trip Type</label>
                     <select
-                        className="flex h-10 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 [&>span]:line-clamp-1"
+                        className="flex h-10 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                         value={tripType}
                         onChange={e => setTripType(e.target.value)}
                     >
@@ -291,7 +318,7 @@ export default function Dashboard() {
                  <div>
                     <label className="text-sm font-medium">Cabin Class</label>
                     <select
-                         className="flex h-10 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 [&>span]:line-clamp-1"
+                         className="flex h-10 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                         value={cabinClass}
                         onChange={e => setCabinClass(e.target.value)}
                     >
