@@ -5,8 +5,9 @@ import { createClient } from '@supabase/supabase-js';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/components/ui/card';
-import { Trash2 } from 'lucide-react';
+import { Trash2, Plane } from 'lucide-react';
 import { Alert } from '@/lib/types';
+import Link from 'next/link';
 
 type Suggestion = {
   label: string;
@@ -205,12 +206,21 @@ export default function Dashboard() {
 
   return (
     <div className="container mx-auto p-4 max-w-4xl">
-      <div className="flex justify-between items-center mb-8">
+      <div className="flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
         <h1 className="text-3xl font-bold">Flight Deal Alerts</h1>
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-4 w-full md:w-auto justify-end">
             <span className="text-sm text-muted-foreground hidden sm:inline">
                 {user.email}
             </span>
+            
+            {/* Link to Results Page */}
+            <Link href="/results">
+              <Button className="bg-blue-600 hover:bg-blue-700">
+                <Plane className="mr-2 h-4 w-4" />
+                View Matches
+              </Button>
+            </Link>
+
             <Button variant="outline" size="sm" onClick={handleLogout}>
                 Logout
             </Button>

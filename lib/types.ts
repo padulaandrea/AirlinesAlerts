@@ -17,6 +17,18 @@ export type Alert = {
   created_at?: string;
 };
 
+export type StoredFlightResult = {
+  id: string;
+  alert_id: string;
+  airline_code: string;
+  flight_data: FlightOffer;
+  price: number;
+  currency: string;
+  departure_date: string;
+  created_at: string;
+  alerts?: Alert; // For joins
+};
+
 export type FlightOffer = {
   type: string;
   id: string;
