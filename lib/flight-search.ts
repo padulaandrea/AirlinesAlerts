@@ -1,136 +1,145 @@
 import { amadeus } from './amadeus';
 import { Alert, FlightOffer } from './types';
-import { addDays, format, differenceInDays, isBefore, parseISO, isValid } from 'date-fns';
+import { addDays, format, parseISO, isValid, isAfter, isBefore } from 'date-fns';
+
+// CONFIGURATION
+const BATCH_SIZE = 4; // How many dates to check at the same time
+const BATCH_DELAY = 1000; // Milliseconds to wait between batches (to avoid rate limits)
+const MAX_RESULTS = 1000; // Maximum number of flights to return
 
 /**
- * Helper to generate a list of dates between start and end.
- * Caps at a certain number to avoid rate limits if the range is too huge.
- * Randomizes the start date or selection to ensure coverage over multiple runs.
+ * Helper to parse ISO 8601 duration format (e.g., "PT2H30M") into total minutes.
  */
-function getDatesToCheck(startDate: string, endDate: string, maxDates: number = 5): string[] {
+function parseDuration(duration: string): number {
+  const match = duration.match(/PT(?:(\d+)H)?(?:(\d+)M)?/);
+  if (!match) return 0;
+  
+  const hours = parseInt(match[1] || '0', 10);
+  const minutes = parseInt(match[2] || '0', 10);
+  
+  return (hours * 60) + minutes;
+}
+
+/**
+ * Generates a list of all dates between start and end (inclusive).
+ */
+function getDatesToCheck(startDate: string, endDate: string): string[] {
   const start = parseISO(startDate);
   const end = parseISO(endDate);
 
   if (!isValid(start) || !isValid(end)) return [];
+  if (isAfter(start, end)) return [];
 
-  const daysDiff = differenceInDays(end, start);
+  const dates: string[] = [];
+  let current = start;
 
-  if (daysDiff <= 0) return [startDate];
-
-  // If the range is small enough, return all dates
-  if (daysDiff < maxDates) {
-    const dates: string[] = [];
-    let current = start;
-    while (isBefore(current, end) || current.getTime() === end.getTime()) {
-      dates.push(format(current, 'yyyy-MM-dd'));
-      current = addDays(current, 1);
-    }
-    return dates;
+  while (isBefore(current, end) || current.getTime() === end.getTime()) {
+    dates.push(format(current, 'yyyy-MM-dd'));
+    current = addDays(current, 1);
   }
 
-  // If range is large, pick 'maxDates' random dates within the range
-  // This ensures that over multiple cron runs, we likely cover different days.
-  const dates: Set<string> = new Set();
-  while (dates.size < maxDates) {
-    const randomOffset = Math.floor(Math.random() * (daysDiff + 1));
-    const date = addDays(start, randomOffset);
-    dates.add(format(date, 'yyyy-MM-dd'));
-  }
-
-  return Array.from(dates).sort();
+  return dates;
 }
 
-// Define basic interface for Amadeus response to avoid 'any'
 interface AmadeusResponse {
   body: string;
 }
 
 /**
- * Searches for flights matching the alert criteria.
- * Filters results strictly by the user's target_price.
- * Returns the cheapest flight object if found.
+ * Checks a SINGLE date for flights.
+ * Returns ALL matching offers found for this specific date.
  */
-export async function checkFlights(alert: Alert): Promise<FlightOffer | null> {
-  console.log(`Checking flights for alert ${alert.id}: ${alert.origin_code} to ${alert.destination_code}`);
+async function searchFlightsForDate(date: string, alert: Alert): Promise<FlightOffer[]> {
+  try {
+    const searchParams: Record<string, string | number | boolean> = {
+      originLocationCode: alert.origin_code,
+      destinationLocationCode: alert.destination_code,
+      departureDate: date,
+      adults: '1',
+      currencyCode: alert.currency,
+      max: 10, // Request slightly more per day to have options before filtering
+      travelClass: alert.cabin_class === 'PREMIUM_ECONOMY' ? 'PREMIUM_ECONOMY' : alert.cabin_class,
+      nonStop: alert.max_stops === 0 ? true : false,
+      maxPrice: Math.floor(alert.target_price)
+    };
 
-  // Determine dates to check
-  // Limit to checking 3 dates per run to be safer on rate limits since we might have many alerts
-  const datesToCheck = getDatesToCheck(alert.start_date_range, alert.end_date_range, 3);
- console.log(datesToCheck)
-  if (datesToCheck.length === 0) {
-    console.log('No dates to check for this alert.');
-    return null;
+    if (alert.trip_type === 'round-trip') {
+        const returnDate = addDays(parseISO(date), 7); 
+        searchParams.returnDate = format(returnDate, 'yyyy-MM-dd');
+    }
+
+    const response = await amadeus.shopping.flightOffersSearch.get(searchParams) as AmadeusResponse;
+    if (!response.body) return [];
+
+    const flights: FlightOffer[] = JSON.parse(response.body).data;
+    const validFlights: FlightOffer[] = [];
+
+    for (const flight of flights) {
+      const price = parseFloat(flight.price.grandTotal);
+
+      // Filter by Max Stops
+      if (alert.max_stops !== undefined && alert.max_stops !== null) {
+          const outboundSegments = flight.itineraries[0].segments;
+          if ((outboundSegments.length - 1) > alert.max_stops) continue;
+      }
+
+      // Filter by Duration
+      if (alert.max_duration !== undefined && alert.max_duration !== null) {
+        const durationMinutes = parseDuration(flight.itineraries[0].duration);
+        if (durationMinutes > alert.max_duration) continue;
+      }
+
+      // Price Check (Safety check)
+      if (price <= alert.target_price) {
+        validFlights.push(flight);
+      }
+    }
+
+    return validFlights;
+
+  } catch (error: unknown) {
+    const err = error as { response?: { body: string } };
+    console.error(`Error on ${date}:`, err.response ? err.response.body : error);
+    return [];
   }
+}
 
-  let cheapestFlight: FlightOffer | null = null;
-  let minPrice = Infinity;
+/**
+ * Main function to process the alert.
+ * Returns a list of the top matching flights (up to MAX_RESULTS).
+ */
+export async function checkFlights(alert: Alert): Promise<FlightOffer[]> {
+  console.log(`Checking alert ${alert.id}: ${alert.origin_code} -> ${alert.destination_code}`);
 
-  for (const date of datesToCheck) {
-    try {
-      console.log(date);
-      // Add a small delay between requests to be nice to the API
-      await new Promise(resolve => setTimeout(resolve, 500));
+  const allDates = getDatesToCheck(alert.start_date_range, alert.end_date_range);
+  if (allDates.length === 0) return [];
 
-      const searchParams: Record<string, string | number | boolean> = {
-        originLocationCode: alert.origin_code,
-        destinationLocationCode: alert.destination_code,
-        departureDate: date,
-        adults: '1',
-        currencyCode: alert.currency,
-        max: 5, // We only need the top cheapest
-        travelClass: alert.cabin_class === 'PREMIUM_ECONOMY' ? 'PREMIUM_ECONOMY' : alert.cabin_class,
-        nonStop: alert.max_stops === 0 ? true : false,
-      };
+  const allFoundFlights: FlightOffer[] = [];
 
-      // Handle Round Trip
-      // For MVP, if round-trip, we assume a default trip duration of 7 days if not specified.
-      // Ideally schema should have 'trip_duration_days'.
-      if (alert.trip_type === 'round-trip') {
-         const returnDate = addDays(parseISO(date), 7); // Default 7 days
-         searchParams.returnDate = format(returnDate, 'yyyy-MM-dd');
-      }
+  // --- BATCH PROCESSING LOOP ---
+  for (let i = 0; i < allDates.length; i += BATCH_SIZE) {
+    const batch = allDates.slice(i, i + BATCH_SIZE);
+    console.log(`Processing batch: ${batch.join(', ')}`);
 
-      const response = await amadeus.shopping.flightOffersSearch.get(searchParams) as AmadeusResponse;
+    // Run requests in parallel for this batch
+    const results = await Promise.all(
+      batch.map(date => searchFlightsForDate(date, alert))
+    );
 
-      if (!response.body) continue;
-      // console.log(response.body)
-      const flights: FlightOffer[] = JSON.parse(response.body).data;
+    // Collect all found flights from this batch
+    for (const flights of results) {
+      allFoundFlights.push(...flights);
+    }
 
-      for (const flight of flights) {
-        const price = parseFloat(flight.price.grandTotal);
-
-        // Filter by Max Stops if set
-        if (alert.max_stops !== undefined && alert.max_stops !== null) {
-            // Check segments in the first itinerary (outbound)
-            const outboundSegments = flight.itineraries[0].segments;
-            const stops = outboundSegments.length - 1;
-
-            // If round trip, check return too? usually max stops applies to each leg or total?
-            // Usually per leg.
-            if (stops > alert.max_stops) continue;
-
-            if (flight.itineraries[1]) {
-                const inboundSegments = flight.itineraries[1].segments;
-                const inboundStops = inboundSegments.length - 1;
-                if (inboundStops > alert.max_stops) continue;
-            }
-        }
-
-        if (price <= alert.target_price) {
-          if (price < minPrice) {
-            minPrice = price;
-            cheapestFlight = flight;
-          }
-        }
-      }
-
-    } catch (error: unknown) {
-      // Cast error to any to access properties safely or use type guard
-      const err = error as { response?: { body: string } };
-      console.error(`Error checking date ${date} for alert ${alert.id}:`, err.response ? err.response.body : error);
-      // Continue to next date
+    // Wait before next batch to be nice to API rate limits
+    if (i + BATCH_SIZE < allDates.length) {
+      await new Promise(resolve => setTimeout(resolve, BATCH_DELAY));
     }
   }
 
-  return cheapestFlight;
+  // Sort all found flights by price (lowest first)
+  allFoundFlights.sort((a, b) => parseFloat(a.price.grandTotal) - parseFloat(b.price.grandTotal));
+
+  // Return only the top matches
+  return allFoundFlights.slice(0, MAX_RESULTS);
 }

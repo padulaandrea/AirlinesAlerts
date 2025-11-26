@@ -5,7 +5,7 @@ import { createClient } from '@supabase/supabase-js';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/components/ui/card';
-import { Trash2, LogIn } from 'lucide-react'; // Added LogIn icon
+import { Trash2 } from 'lucide-react';
 import { Alert } from '@/lib/types';
 
 type Suggestion = {
@@ -22,9 +22,9 @@ export default function Dashboard() {
 
   // 2. User & Auth State
   const [user, setUser] = useState<{ id: string; email?: string } | null>(null);
-  const [email, setEmail] = useState(''); // State for login input
+  const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(true);
-  const [loginLoading, setLoginLoading] = useState(false); // Loading state for login button
+  const [loginLoading, setLoginLoading] = useState(false);
 
   // App State
   const [alerts, setAlerts] = useState<Alert[]>([]);
@@ -35,6 +35,10 @@ export default function Dashboard() {
   const [endDate, setEndDate] = useState('');
   const [tripType, setTripType] = useState('one-way');
   const [cabinClass, setCabinClass] = useState('ECONOMY');
+  
+  // New State for Filters
+  const [maxStops, setMaxStops] = useState('');
+  const [maxDuration, setMaxDuration] = useState(''); // In Hours
 
   // Autocomplete State
   const [originSuggestions, setOriginSuggestions] = useState<Suggestion[]>([]);
@@ -52,27 +56,18 @@ export default function Dashboard() {
   }, [supabase]);
 
   useEffect(() => {
-    // 1. Helper: Sync the logged-in user to the public.users table
     const syncUser = async (sessionUser: { id: string; email?: string }) => {
       if (!sessionUser.email) return;
-
-      // "Upsert" = Insert if new, Update if exists (prevents duplicate errors)
       const { error } = await supabase.from('users').upsert(
-        {
-          id: sessionUser.id,
-          email: sessionUser.email,
-        },
+        { id: sessionUser.id, email: sessionUser.email },
         { onConflict: 'id' }
       );
-
       if (error) console.error('Error syncing user:', error);
     };
 
     async function getUser() {
-      // 2. Check active session
       const { data: { session } } = await supabase.auth.getSession();
       if (session?.user) {
-        // SYNC HAPPENS HERE ON PAGE LOAD
         await syncUser(session.user); 
         setUser(session.user);
         fetchAlerts(session.user.id);
@@ -80,10 +75,8 @@ export default function Dashboard() {
         setLoading(false);
       }
 
-      // 3. Listen for auth changes (e.g., logging in)
       const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
         if (session?.user) {
-          // SYNC HAPPENS HERE ON LOGIN
           await syncUser(session.user);
           setUser(session.user);
           fetchAlerts(session.user.id);
@@ -98,25 +91,17 @@ export default function Dashboard() {
     getUser();
   }, [fetchAlerts, supabase]);
 
-  // --- NEW: Login Function ---
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
     setLoginLoading(true);
-    
-    // Uses Magic Link (Email OTP) - easiest for setup
     const { error } = await supabase.auth.signInWithOtp({
       email,
       options: {
-        // This redirects them back to this page after clicking the email link
         emailRedirectTo: typeof window !== 'undefined' ? window.location.origin : undefined,
       }
     });
-
-    if (error) {
-      alert('Error logging in: ' + error.message);
-    } else {
-      alert('Check your email for the login link!');
-    }
+    if (error) alert('Error logging in: ' + error.message);
+    else alert('Check your email for the login link!');
     setLoginLoading(false);
   }
 
@@ -125,11 +110,13 @@ export default function Dashboard() {
     setUser(null);
     setAlerts([]);
   }
-  // ---------------------------
 
   async function createAlert(e: React.FormEvent) {
     e.preventDefault();
     if (!user) return alert('Please login first');
+
+    // Convert maxDuration from hours to minutes for storage
+    const durationInMinutes = maxDuration ? parseInt(maxDuration) * 60 : null;
 
     const { error } = await supabase.from('alerts').insert({
       user_id: user.id,
@@ -141,6 +128,8 @@ export default function Dashboard() {
       end_date_range: endDate,
       cabin_class: cabinClass,
       currency: 'USD',
+      max_stops: maxStops === '' ? null : parseInt(maxStops),
+      max_duration: durationInMinutes,
     });
 
     if (error) {
@@ -150,6 +139,8 @@ export default function Dashboard() {
       setOrigin('');
       setDestination('');
       setTargetPrice('');
+      setMaxStops('');
+      setMaxDuration('');
       fetchAlerts(user.id);
     }
   }
@@ -159,13 +150,11 @@ export default function Dashboard() {
     setAlerts(alerts.filter(a => a.id !== id));
   }
 
-  // Autocomplete Logic
   const fetchAirports = async (keyword: string, setFn: (data: Suggestion[]) => void) => {
       if(keyword.length < 2) {
           setFn([]);
           return;
       }
-      // Note: Ensure you have this API route created or this will fail silently
       try {
         const res = await fetch(`/api/airports?keyword=${keyword}`);
         if (res.ok) {
@@ -187,7 +176,6 @@ export default function Dashboard() {
       if (val.length > 1) setTimeout(() => fetchAirports(val, setDestinationSuggestions), 300);
   };
 
-  // --- VIEW 1: NOT LOGGED IN ---
   if (!user) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-gray-50">
@@ -215,7 +203,6 @@ export default function Dashboard() {
     );
   }
 
-  // --- VIEW 2: LOGGED IN (DASHBOARD) ---
   return (
     <div className="container mx-auto p-4 max-w-4xl">
       <div className="flex justify-between items-center mb-8">
@@ -239,7 +226,6 @@ export default function Dashboard() {
             </CardHeader>
             <CardContent>
               <form onSubmit={createAlert} className="space-y-4">
-                {/* Origin Input */}
                 <div>
                     <label className="text-sm font-medium">Origin (IATA)</label>
                     <Input
@@ -257,7 +243,6 @@ export default function Dashboard() {
                     </datalist>
                 </div>
 
-                {/* Destination Input */}
                 <div>
                     <label className="text-sm font-medium">Destination (IATA)</label>
                     <Input
@@ -275,7 +260,6 @@ export default function Dashboard() {
                     </datalist>
                 </div>
 
-                {/* Other Inputs */}
                  <div>
                     <label className="text-sm font-medium">Target Price (USD)</label>
                     <Input
@@ -304,6 +288,30 @@ export default function Dashboard() {
                         required
                     />
                 </div>
+                
+                <div className="grid grid-cols-2 gap-2">
+                    <div>
+                        <label className="text-sm font-medium">Max Stops</label>
+                        <Input
+                            type="number"
+                            value={maxStops}
+                            onChange={e => setMaxStops(e.target.value)}
+                            placeholder="Any"
+                            min="0"
+                        />
+                    </div>
+                    <div>
+                        <label className="text-sm font-medium">Max Hours</label>
+                        <Input
+                            type="number"
+                            value={maxDuration}
+                            onChange={e => setMaxDuration(e.target.value)}
+                            placeholder="Any"
+                            min="1"
+                        />
+                    </div>
+                </div>
+
                 <div>
                     <label className="text-sm font-medium">Trip Type</label>
                     <select
@@ -351,10 +359,16 @@ export default function Dashboard() {
                             </CardHeader>
                             <CardContent>
                                 <div className="text-sm text-muted-foreground space-y-1">
-                                    <p>Budget: ${alert.target_price}</p>
-                                    <p>Dates: {alert.start_date_range} - {alert.end_date_range}</p>
-                                    <p>Cabin: {alert.cabin_class}</p>
-                                    <p>Type: {alert.trip_type}</p>
+                                    <p><span className="font-semibold">Budget:</span> ${alert.target_price}</p>
+                                    <p><span className="font-semibold">Dates:</span> {alert.start_date_range} - {alert.end_date_range}</p>
+                                    <p><span className="font-semibold">Cabin:</span> {alert.cabin_class}</p>
+                                    <p><span className="font-semibold">Type:</span> {alert.trip_type}</p>
+                                    {alert.max_stops !== null && (
+                                        <p><span className="font-semibold">Max Stops:</span> {alert.max_stops}</p>
+                                    )}
+                                    {alert.max_duration && (
+                                        <p><span className="font-semibold">Max Duration:</span> {Math.round(alert.max_duration / 60)}h</p>
+                                    )}
                                 </div>
                             </CardContent>
                         </Card>
